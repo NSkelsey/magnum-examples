@@ -1,3 +1,4 @@
+// cmake --build . && ./src/viewer/magnum-viewer ~/projects/monopticon/src/assets/router-toro.fbx
 /*
     This file is part of Magnum.
 
@@ -27,11 +28,11 @@
     CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
+
 #include <Corrade/Containers/Array.h>
 #include <Corrade/Containers/Optional.h>
 #include <Corrade/PluginManager/Manager.h>
 #include <Corrade/Utility/Arguments.h>
-#include <Corrade/Utility/DebugStl.h>
 #include <Magnum/Mesh.h>
 #include <Magnum/PixelFormat.h>
 #include <Magnum/GL/DefaultFramebuffer.h>
@@ -53,6 +54,8 @@
 #include <Magnum/Trade/PhongMaterialData.h>
 #include <Magnum/Trade/SceneData.h>
 #include <Magnum/Trade/TextureData.h>
+#include <Magnum/Shaders/MeshVisualizer.h>
+#include <Magnum/Shaders/Flat.h>
 
 namespace Magnum { namespace Examples {
 
@@ -79,6 +82,11 @@ class ViewerExample: public Platform::Application {
 
         Shaders::Phong _coloredShader,
             _texturedShader{Shaders::Phong::Flag::DiffuseTexture};
+
+        Shaders::MeshVisualizer _wireShader{Shaders::MeshVisualizer::Flag::Wireframe|Shaders::MeshVisualizer::Flag::NoGeometryShader};
+
+        Shaders::Flat3D _flatShader{NoCreate};
+
         Containers::Array<Containers::Optional<GL::Mesh>> _meshes;
         Containers::Array<Containers::Optional<GL::Texture2D>> _textures;
 
@@ -87,16 +95,23 @@ class ViewerExample: public Platform::Application {
         SceneGraph::Camera3D* _camera;
         SceneGraph::DrawableGroup3D _drawables;
         Vector3 _previousPosition;
+
+        Color4 blue = 0x0000ffff_rgbaf;
+        Color4 opaque = 0x00000000_rgbaf;
+
+        Color4 wfColor = 0x00ff08_rgbf;
+        Color4 wfpColor = 0x00000000_rgbaf;
 };
 
 class ColoredDrawable: public SceneGraph::Drawable3D {
     public:
-        explicit ColoredDrawable(Object3D& object, Shaders::Phong& shader, GL::Mesh& mesh, const Color4& color, SceneGraph::DrawableGroup3D& group): SceneGraph::Drawable3D{object, &group}, _shader(shader), _mesh(mesh), _color{color} {}
+
+        explicit ColoredDrawable(Object3D& object, Shaders::Flat3D& shader, GL::Mesh& mesh, const Color4& color, SceneGraph::DrawableGroup3D& group): SceneGraph::Drawable3D{object, &group}, _shader(shader), _mesh(mesh), _color{color} {}
 
     private:
         void draw(const Matrix4& transformationMatrix, SceneGraph::Camera3D& camera) override;
 
-        Shaders::Phong& _shader;
+        Shaders::Flat3D& _shader;
         GL::Mesh& _mesh;
         Color4 _color;
 };
@@ -116,22 +131,25 @@ class TexturedDrawable: public SceneGraph::Drawable3D {
 ViewerExample::ViewerExample(const Arguments& arguments):
     Platform::Application{arguments, Configuration{}
         .setTitle("Magnum Viewer Example")
-        .setWindowFlags(Configuration::WindowFlag::Resizable)}
+        .setWindowFlags(Configuration::WindowFlag::Resizable),
+        GLConfiguration{}.setSampleCount(16)}
 {
     Utility::Arguments args;
     args.addArgument("file").setHelp("file", "file to load")
         .addOption("importer", "AnySceneImporter").setHelp("importer", "importer plugin to use")
         .addSkippedPrefix("magnum", "engine-specific options")
-        .setGlobalHelp("Displays a 3D scene file provided on command line.")
         .parse(arguments.argc, arguments.argv);
 
     /* Every scene needs a camera */
     _cameraObject
         .setParent(&_scene)
-        .translate(Vector3::zAxis(5.0f));
+        .translate(Vector3::zAxis(500.0f));
+
+    //float inf = 1/0;
+
     (*(_camera = new SceneGraph::Camera3D{_cameraObject}))
         .setAspectRatioPolicy(SceneGraph::AspectRatioPolicy::Extend)
-        .setProjectionMatrix(Matrix4::perspectiveProjection(35.0_degf, 1.0f, 0.01f, 1000.0f))
+        .setProjectionMatrix(Matrix4::perspectiveProjection(35.0_degf, 1.0f, 0.01f, 2000.0f))
         .setViewport(GL::defaultFramebuffer.viewport().size());
 
     /* Base object, parent of all (for easy manipulation) */
@@ -140,21 +158,27 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     /* Setup renderer and shader defaults */
     GL::Renderer::enable(GL::Renderer::Feature::DepthTest);
     GL::Renderer::enable(GL::Renderer::Feature::FaceCulling);
+
+
     _coloredShader
-        .setAmbientColor(0x111111_rgbf)
-        .setSpecularColor(0xffffff_rgbf)
-        .setShininess(80.0f);
+        .setAmbientColor(blue)
+        .setSpecularColor(blue)
+        .setShininess(20.0f);
     _texturedShader
-        .setAmbientColor(0x111111_rgbf)
-        .setSpecularColor(0x111111_rgbf)
-        .setShininess(80.0f);
+        .setAmbientColor(blue)
+        .setSpecularColor(blue)
+        .setShininess(20.0f);
+
+    _wireShader.setWireframeColor(wfColor);
+    _wireShader.setColor(wfpColor);
+    _flatShader = Shaders::Flat3D{};
+    _flatShader.setColor(0xfffffff_rgbf);
 
     /* Load a scene importer plugin */
     PluginManager::Manager<Trade::AbstractImporter> manager;
     Containers::Pointer<Trade::AbstractImporter> importer = manager.loadAndInstantiate(args.value("importer"));
     if(!importer) std::exit(1);
 
-    Debug{} << "Opening file" << args.value("file");
 
     /* Load file */
     if(!importer->openFile(args.value("file")))
@@ -163,7 +187,6 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     /* Load all textures. Textures that fail to load will be NullOpt. */
     _textures = Containers::Array<Containers::Optional<GL::Texture2D>>{importer->textureCount()};
     for(UnsignedInt i = 0; i != importer->textureCount(); ++i) {
-        Debug{} << "Importing texture" << i << importer->textureName(i);
 
         Containers::Optional<Trade::TextureData> textureData = importer->texture(i);
         if(!textureData || textureData->type() != Trade::TextureData::Type::Texture2D) {
@@ -171,7 +194,6 @@ ViewerExample::ViewerExample(const Arguments& arguments):
             continue;
         }
 
-        Debug{} << "Importing image" << textureData->image() << importer->image2DName(textureData->image());
 
         Containers::Optional<Trade::ImageData2D> imageData = importer->image2D(textureData->image());
         GL::TextureFormat format;
@@ -202,7 +224,6 @@ ViewerExample::ViewerExample(const Arguments& arguments):
        temporarily. */
     Containers::Array<Containers::Optional<Trade::PhongMaterialData>> materials{importer->materialCount()};
     for(UnsignedInt i = 0; i != importer->materialCount(); ++i) {
-        Debug{} << "Importing material" << i << importer->materialName(i);
 
         Containers::Pointer<Trade::AbstractMaterialData> materialData = importer->material(i);
         if(!materialData || materialData->type() != Trade::MaterialType::Phong) {
@@ -216,7 +237,6 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     /* Load all meshes. Meshes that fail to load will be NullOpt. */
     _meshes = Containers::Array<Containers::Optional<GL::Mesh>>{importer->mesh3DCount()};
     for(UnsignedInt i = 0; i != importer->mesh3DCount(); ++i) {
-        Debug{} << "Importing mesh" << i << importer->mesh3DName(i);
 
         Containers::Optional<Trade::MeshData3D> meshData = importer->mesh3D(i);
         if(!meshData || !meshData->hasNormals() || meshData->primitive() != MeshPrimitive::Triangles) {
@@ -230,7 +250,6 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
     /* Load the scene */
     if(importer->defaultScene() != -1) {
-        Debug{} << "Adding default scene" << importer->sceneName(importer->defaultScene());
 
         Containers::Optional<Trade::SceneData> sceneData = importer->scene(importer->defaultScene());
         if(!sceneData) {
@@ -245,11 +264,10 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     /* The format has no scene support, display just the first loaded mesh with
        a default material and be done with it */
     } else if(!_meshes.empty() && _meshes[0])
-        new ColoredDrawable{_manipulator, _coloredShader, *_meshes[0], 0xffffff_rgbf, _drawables};
+        new ColoredDrawable{_manipulator, _flatShader, *_meshes[0], opaque, _drawables};
 }
 
 void ViewerExample::addObject(Trade::AbstractImporter& importer, Containers::ArrayView<const Containers::Optional<Trade::PhongMaterialData>> materials, Object3D& parent, UnsignedInt i) {
-    Debug{} << "Importing object" << i << importer.object3DName(i);
     Containers::Pointer<Trade::ObjectData3D> objectData = importer.object3D(i);
     if(!objectData) {
         Error{} << "Cannot import object, skipping";
@@ -266,7 +284,7 @@ void ViewerExample::addObject(Trade::AbstractImporter& importer, Containers::Arr
 
         /* Material not available / not loaded, use a default material */
         if(materialId == -1 || !materials[materialId]) {
-            new ColoredDrawable{*object, _coloredShader, *_meshes[objectData->instance()], 0xffffff_rgbf, _drawables};
+            new ColoredDrawable{*object, _flatShader, *_meshes[objectData->instance()], opaque, _drawables};
 
         /* Textured material. If the texture failed to load, again just use a
            default colored material. */
@@ -275,11 +293,11 @@ void ViewerExample::addObject(Trade::AbstractImporter& importer, Containers::Arr
             if(texture)
                 new TexturedDrawable{*object, _texturedShader, *_meshes[objectData->instance()], *texture, _drawables};
             else
-                new ColoredDrawable{*object, _coloredShader, *_meshes[objectData->instance()], 0xffffff_rgbf, _drawables};
+                new ColoredDrawable{*object, _flatShader, *_meshes[objectData->instance()], opaque, _drawables};
 
         /* Color-only material */
         } else {
-            new ColoredDrawable{*object, _coloredShader, *_meshes[objectData->instance()], materials[materialId]->diffuseColor(), _drawables};
+            new ColoredDrawable{*object, _flatShader, *_meshes[objectData->instance()], materials[materialId]->diffuseColor(), _drawables};
         }
     }
 
@@ -290,18 +308,14 @@ void ViewerExample::addObject(Trade::AbstractImporter& importer, Containers::Arr
 
 void ColoredDrawable::draw(const Matrix4& transformationMatrix, SceneGraph::Camera3D& camera) {
     _shader
-        .setDiffuseColor(_color)
-        .setLightPosition(camera.cameraMatrix().transformPoint({-3.0f, 10.0f, 10.0f}))
-        .setTransformationMatrix(transformationMatrix)
-        .setNormalMatrix(transformationMatrix.rotationScaling())
-        .setProjectionMatrix(camera.projectionMatrix());
+        .setTransformationProjectionMatrix(camera.projectionMatrix()*transformationMatrix);
 
     _mesh.draw(_shader);
 }
 
 void TexturedDrawable::draw(const Matrix4& transformationMatrix, SceneGraph::Camera3D& camera) {
     _shader
-        .setLightPosition(camera.cameraMatrix().transformPoint({-3.0f, 10.0f, 10.0f}))
+        .setLightPosition(camera.cameraMatrix().transformPoint({-100.0f, 100.0f, 100.0f}))
         .setTransformationMatrix(transformationMatrix)
         .setNormalMatrix(transformationMatrix.rotationScaling())
         .setProjectionMatrix(camera.projectionMatrix())
@@ -316,6 +330,7 @@ void ViewerExample::drawEvent() {
     _camera->draw(_drawables);
 
     swapBuffers();
+    redraw();
 }
 
 void ViewerExample::viewportEvent(ViewportEvent& event) {
