@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 #
 #   This file is part of Magnum.
 #
@@ -5,10 +7,6 @@
 #
 #       2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019 —
 #           Vladimír Vondruš <mosra@centrum.cz>
-#       2018 — ShaddyAQN <ShaddyAQN@gmail.com>
-#       2018 — Jonathan Hale <squareys@googlemail.com>
-#       2018 — Tomáš Skřivan <skrivantomas@seznam.cz>
-#       2018 — Natesh Narain <nnaraindev@gmail.com>
 #
 #   This is free and unencumbered software released into the public domain.
 #
@@ -31,25 +29,37 @@
 #   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 
-cmake_minimum_required(VERSION 3.1)
+import array
 
-project(MagnumImGuiExample)
+from magnum import *
+from magnum import gl, platform, shaders
 
-# Add module path in case this is project root
-if(PROJECT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
-    set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/../../modules/" ${CMAKE_MODULE_PATH})
-endif()
+class TriangleExample(platform.Application):
+    def __init__(self):
+        configuration = self.Configuration()
+        configuration.title = "Magnum Python Triangle Example"
+        platform.Application.__init__(self, configuration)
 
-find_package(Magnum REQUIRED GL Sdl2Application)
-find_package(MagnumIntegration REQUIRED ImGui)
+        buffer = gl.Buffer()
+        buffer.set_data(array.array('f', [
+            -0.5, -0.5, 1.0, 0.0, 0.0,
+             0.5, -0.5, 0.0, 1.0, 0.0,
+             0.0,  0.5, 0.0, 0.0, 1.0
+        ]))
 
-set_directory_properties(PROPERTIES CORRADE_USE_PEDANTIC_FLAGS ON)
+        self._mesh = gl.Mesh()
+        self._mesh.count = 3
+        self._mesh.add_vertex_buffer(buffer, 0, 5*4,
+            shaders.VertexColor2D.POSITION)
+        self._mesh.add_vertex_buffer(buffer, 2*4, 5*4,
+            shaders.VertexColor2D.COLOR3)
 
-add_executable(magnum-imgui ImGuiExample.cpp)
-target_link_libraries(magnum-imgui PRIVATE
-    Magnum::Application
-    Magnum::GL
-    Magnum::Magnum
-    MagnumIntegration::ImGui)
+        self._shader = shaders.VertexColor2D()
 
-install(TARGETS magnum-imgui DESTINATION ${MAGNUM_BINARY_INSTALL_DIR})
+    def draw_event(self):
+        gl.default_framebuffer.clear(gl.FramebufferClear.COLOR)
+
+        self._mesh.draw(self._shader)
+        self.swap_buffers()
+
+exit(TriangleExample().exec())
