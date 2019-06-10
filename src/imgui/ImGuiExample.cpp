@@ -39,6 +39,8 @@
 
 #ifdef CORRADE_TARGET_ANDROID
 #include <Magnum/Platform/AndroidApplication.h>
+#elif defined(CORRADE_TARGET_EMSCRIPTEN)
+#include <Magnum/Platform/EmscriptenApplication.h>
 #else
 #include <Magnum/Platform/Sdl2Application.h>
 #endif
@@ -184,7 +186,11 @@ void ImGuiExample::mouseMoveEvent(MouseMoveEvent& event) {
 }
 
 void ImGuiExample::mouseScrollEvent(MouseScrollEvent& event) {
-    if(_imgui.handleMouseScrollEvent(event)) return;
+    if(_imgui.handleMouseScrollEvent(event)) {
+        /* Prevent scrolling the page */
+        event.setAccepted();
+        return;
+    }
 }
 
 void ImGuiExample::textInputEvent(TextInputEvent& event) {
