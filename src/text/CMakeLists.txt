@@ -39,6 +39,7 @@ endif()
 find_package(Magnum REQUIRED
     GL
     Shaders
+    SceneGraph
     Text
     Sdl2Application)
 
@@ -54,6 +55,7 @@ target_link_libraries(magnum-text PRIVATE
     Magnum::GL
     Magnum::Magnum
     Magnum::Shaders
+    Magnum::SceneGraph
     Magnum::Text)
 
 install(TARGETS magnum-text DESTINATION ${MAGNUM_BINARY_INSTALL_DIR})
