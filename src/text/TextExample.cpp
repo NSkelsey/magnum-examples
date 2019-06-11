@@ -27,6 +27,11 @@
     CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
+#include <sstream>
+#include <ctime>
+#include <iomanip>
+#include <iostream>
+
 #include <Corrade/PluginManager/Manager.h>
 #include <Corrade/Utility/FormatStl.h>
 #include <Corrade/Utility/Debug.h>
@@ -57,7 +62,7 @@ typedef Magnum::SceneGraph::Scene<Magnum::SceneGraph::MatrixTransformation3D> Sc
 
 class ThingAble: public Object3D, SceneGraph::Drawable3D {
     public:
-        explicit ThingAble(Shaders::VertexColor3D& shader, GL::Mesh& mesh, Object3D& parent, SceneGraph::DrawableGroup3D& drawables): Object3D{&parent}, SceneGraph::Drawable3D{*this, &drawables}, _shader(shader), _mesh(mesh) {}
+        explicit ThingAble(Shaders::VertexColor3D& shader, Object3D& parent, SceneGraph::DrawableGroup3D& drawables): Object3D{&parent}, SceneGraph::Drawable3D{*this, &drawables}, _shader(shader) {}
 
     private:
         virtual void draw(const Matrix4& transformationMatrix, SceneGraph::Camera3D& camera) {
@@ -68,7 +73,46 @@ class ThingAble: public Object3D, SceneGraph::Drawable3D {
         }
 
         Shaders::VertexColor3D& _shader;
-        GL::Mesh& _mesh;
+        GL::Mesh _mesh;
+};
+
+class TextDrawable: public Object3D, SceneGraph::Drawable3D {
+    public:
+        explicit TextDrawable(std::string msg, Containers::Pointer<Text::AbstractFont> &font, Text::DistanceFieldGlyphCache *cache, Shaders::DistanceFieldVector3D& shader, Object3D& parent, SceneGraph::DrawableGroup3D& drawables): Object3D{&parent}, SceneGraph::Drawable3D{*this, &drawables}, _shader(shader) {
+
+            _text.reset(new Text::Renderer3D(*font.get(), *cache, 0.035f, Text::Alignment::TopRight));
+            _text->reserve(40, GL::BufferUsage::DynamicDraw, GL::BufferUsage::StaticDraw);
+
+             updateText();
+
+             _shader.setColor(Color3::fromHsv({216.0_degf, 0.85f, 1.0f}))
+                    .setOutlineColor(Color3{0.95f})
+                    .setOutlineRange(0.45f, 0.35f);
+        }
+
+        void updateText() {
+            std::stringstream ss;
+            auto time = std::time(nullptr);
+            ss << std::put_time(std::localtime(&time), "%F %T%z");
+
+            std::cout << ss.str() << std::endl;
+            _text->render(ss.str());
+        }
+
+
+
+    private:
+        virtual void draw(const Matrix4& transformationMatrix, SceneGraph::Camera3D& camera) {
+
+            auto m = camera.projectionMatrix()*transformationMatrix;
+            Utility::Debug{} << "textdrawable_tp\n" << m << "\n";
+            _shader.setTransformationProjectionMatrix(m)
+                   .setSmoothness(0.025f/ transformationMatrix.uniformScaling());
+            _text->mesh().draw(_shader);
+        }
+
+        Containers::Pointer<Text::Renderer3D> _text;
+        Shaders::DistanceFieldVector3D& _shader;
 };
 
 
@@ -82,7 +126,6 @@ class TextExample: public Platform::Application {
         void mouseScrollEvent(MouseScrollEvent& event) override;
         void mouseMoveEvent(MouseMoveEvent& event) override;
 
-        void updateText();
 
         PluginManager::Manager<Text::AbstractFont> _manager;
         Containers::Pointer<Text::AbstractFont> _font;
@@ -90,7 +133,6 @@ class TextExample: public Platform::Application {
         Text::DistanceFieldGlyphCache _cache;
         GL::Mesh _text;
         GL::Buffer _vertices, _indices;
-        Containers::Pointer<Text::Renderer3D> _text2;
         Shaders::DistanceFieldVector3D _shader;
 
         Object3D *_cameraRig, *_cameraObject;
@@ -103,9 +145,11 @@ class TextExample: public Platform::Application {
 
         Matrix4 _transformation;
         Matrix4 _projection;
+        TextDrawable *_dynamicText;
 
         GL::Mesh _mesh;
         Shaders::VertexColor3D _triang_shader;
+        int cnt = 0;
 };
 
 TextExample::TextExample(const Arguments& arguments): Platform::Application{arguments, Configuration{}.setTitle("Magnum Text Example")}, _cache(Vector2i(2048), Vector2i(512), 22), _text{NoCreate} {
@@ -113,7 +157,7 @@ TextExample::TextExample(const Arguments& arguments): Platform::Application{argu
     /* Camera setup */
     (*(_cameraRig = new Object3D{&_scene}));
     (*(_cameraObject = new Object3D{_cameraRig}))
-        .translate(Vector3::zAxis(-5.0f));
+        .translate(Vector3::zAxis(5.0f));
     (_camera = new SceneGraph::Camera3D(*_cameraObject))
         ->setAspectRatioPolicy(SceneGraph::AspectRatioPolicy::Extend)
         .setProjectionMatrix(Matrix4::perspectiveProjection(35.0_degf, Vector2{windowSize()}.aspectRatio(), 0.01f, 100.0f))
@@ -139,9 +183,6 @@ TextExample::TextExample(const Arguments& arguments): Platform::Application{argu
         "Hej Världen!",
         _vertices, _indices, GL::BufferUsage::StaticDraw, Text::Alignment::MiddleCenter);
 
-    _text2.reset(new Text::Renderer3D(*_font, _cache, 0.035f, Text::Alignment::TopRight));
-    _text2->reserve(40, GL::BufferUsage::DynamicDraw, GL::BufferUsage::StaticDraw);
-
     GL::Renderer::enable(GL::Renderer::Feature::Blending);
     GL::Renderer::setBlendFunction(GL::Renderer::BlendFunction::SourceAlpha, GL::Renderer::BlendFunction::OneMinusSourceAlpha);
     GL::Renderer::setBlendEquation(GL::Renderer::BlendEquation::Add, GL::Renderer::BlendEquation::Add);
@@ -152,9 +193,9 @@ TextExample::TextExample(const Arguments& arguments): Platform::Application{argu
         Matrix4::translation(Vector3::zAxis(-5.0f));
 
     obj = new Object3D{&_scene};
-    //Matrix4 scaling = Matrix4::scaling(Vector3{2.0});
-    //obj->transform(scaling);
-    obj->translate(Vector3{0.0f, 0.0f, -10.0f});
+    Matrix4 scaling = Matrix4::scaling(Vector3{4.0});
+    obj->transform(scaling);
+    obj->translate(Vector3{1.0f, 0.0f, 0.0f});
 
     struct TriangleVertex {
         Vector3 position;
@@ -174,10 +215,11 @@ TextExample::TextExample(const Arguments& arguments): Platform::Application{argu
     Shaders::VertexColor3D::Position{},
     Shaders::VertexColor3D::Color3{});
 
-    new ThingAble(_triang_shader, _mesh, *obj, _drawables);
+    //new ThingAble(_triang_shader, _mesh, *obj, _drawables);
+
+    _dynamicText = new TextDrawable("Hello, SN", _font, &_cache, _shader, *obj, _drawables);
 
     GL::Renderer::setClearColor(0x002b36_rgbf);
-    updateText();
 }
 
 void TextExample::viewportEvent(ViewportEvent& event) {
@@ -193,9 +235,16 @@ void TextExample::drawEvent() {
 
     _shader.bindVectorTexture(_cache.texture());
 
+    if ( cnt % 60 == 0 ) {
+        _dynamicText->updateText();
+        redraw();
+    }
+
+
     auto tp = _projection * _transformation;
     auto cam_tp = _camera->projectionMatrix() * _camera->cameraMatrix() * obj->transformationMatrix();
 
+    /*
     _shader.setTransformationProjectionMatrix(tp)
         .setColor(Color3::fromHsv({216.0_degf, 0.85f, 1.0f}))
         .setOutlineColor(Color3{0.95f})
@@ -207,15 +256,14 @@ void TextExample::drawEvent() {
         .setColor(Color3{1.0f})
         .setOutlineRange(0.5f, 1.0f)
         .setSmoothness(0.075f);
-    _text2->mesh().draw(_shader);
+    //_text2->mesh().draw(_shader);
+    */
 
     Utility::Debug{} << "tp\n" << tp << "\n";
 
 
     Utility::Debug{} << "cam_tp\n" << cam_tp << "\n";
 
-    //_triang_shader.setTransformationProjectionMatrix(tp);
-    //_mesh.draw(_triang_shader);
     _camera->draw(_drawables);
 
     swapBuffers();
@@ -230,17 +278,11 @@ void TextExample::mouseScrollEvent(MouseScrollEvent& event) {
     else
         _transformation = Matrix3::rotation(Deg(-1.0f))*Matrix3::scaling(Vector2(1.0f/1.1f))* _transformation;
     */
-    updateText();
 
     event.setAccepted();
     redraw();
 }
 
-void TextExample::updateText() {
-    _text2->render(Utility::formatString("Rotation: {:.2}°\nScale: {:.2}",
-        1.0f,
-        1.0f));
-}
 
 void TextExample::mouseMoveEvent(MouseMoveEvent& event) {
     if(!(event.buttons() & MouseMoveEvent::Button::Left)) return;
@@ -259,10 +301,7 @@ void TextExample::mouseMoveEvent(MouseMoveEvent& event) {
         .rotateY(Rad{-delta.x()});
 
     _previousMousePosition = event.position();
-    event.setAccepted();
 
-
-    updateText();
     event.setAccepted();
 
     redraw();
