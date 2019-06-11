@@ -55,6 +55,23 @@ using namespace Magnum::Math::Literals;
 typedef Magnum::SceneGraph::Object<Magnum::SceneGraph::MatrixTransformation3D> Object3D;
 typedef Magnum::SceneGraph::Scene<Magnum::SceneGraph::MatrixTransformation3D> Scene3D;
 
+class ThingAble: public Object3D, SceneGraph::Drawable3D {
+    public:
+        explicit ThingAble(Shaders::VertexColor3D& shader, GL::Mesh& mesh, Object3D& parent, SceneGraph::DrawableGroup3D& drawables): Object3D{&parent}, SceneGraph::Drawable3D{*this, &drawables}, _shader(shader), _mesh(mesh) {}
+
+    private:
+        virtual void draw(const Matrix4& transformationMatrix, SceneGraph::Camera3D& camera) {
+            auto m = camera.projectionMatrix()*transformationMatrix;
+            Utility::Debug{} << "drawable_tp\n" << m << "\n";
+            _shader.setTransformationProjectionMatrix(m);
+            _mesh.draw(_shader);
+        }
+
+        Shaders::VertexColor3D& _shader;
+        GL::Mesh& _mesh;
+};
+
+
 class TextExample: public Platform::Application {
     public:
         explicit TextExample(const Arguments& arguments);
@@ -73,8 +90,8 @@ class TextExample: public Platform::Application {
         Text::DistanceFieldGlyphCache _cache;
         GL::Mesh _text;
         GL::Buffer _vertices, _indices;
-        Containers::Pointer<Text::Renderer2D> _text2;
-        Shaders::DistanceFieldVector2D _shader;
+        Containers::Pointer<Text::Renderer3D> _text2;
+        Shaders::DistanceFieldVector3D _shader;
 
         Object3D *_cameraRig, *_cameraObject;
         SceneGraph::Camera3D* _camera;
@@ -82,27 +99,24 @@ class TextExample: public Platform::Application {
         SceneGraph::DrawableGroup3D _drawables;
 
         Vector2i _previousMousePosition, _mousePressPosition;
-        Object3D *cob;
+        Object3D *obj;
 
-        Matrix3 _transformation;
-        Matrix3 _projection;
+        Matrix4 _transformation;
+        Matrix4 _projection;
 
         GL::Mesh _mesh;
-        Shaders::VertexColor3D _triag_shader;
+        Shaders::VertexColor3D _triang_shader;
 };
 
 TextExample::TextExample(const Arguments& arguments): Platform::Application{arguments, Configuration{}.setTitle("Magnum Text Example")}, _cache(Vector2i(2048), Vector2i(512), 22), _text{NoCreate} {
 
     /* Camera setup */
-    (*(_cameraRig = new Object3D{&_scene}))
-        .translate(Vector3::yAxis(3.0f))
-        .rotateY(40.0_degf);
+    (*(_cameraRig = new Object3D{&_scene}));
     (*(_cameraObject = new Object3D{_cameraRig}))
-        .translate(Vector3::zAxis(20.0f))
-        .rotateX(-25.0_degf);
+        .translate(Vector3::zAxis(-5.0f));
     (_camera = new SceneGraph::Camera3D(*_cameraObject))
         ->setAspectRatioPolicy(SceneGraph::AspectRatioPolicy::Extend)
-        .setProjectionMatrix(Matrix4::perspectiveProjection(35.0_degf, 1.0f, 0.001f, 100.0f))
+        .setProjectionMatrix(Matrix4::perspectiveProjection(35.0_degf, Vector2{windowSize()}.aspectRatio(), 0.01f, 100.0f))
         .setViewport(GL::defaultFramebuffer.viewport().size()); /* Drawing setup */
 
     /* Load FreeTypeFont plugin */
@@ -125,20 +139,22 @@ TextExample::TextExample(const Arguments& arguments): Platform::Application{argu
         "Hej Världen!",
         _vertices, _indices, GL::BufferUsage::StaticDraw, Text::Alignment::MiddleCenter);
 
-    _text2.reset(new Text::Renderer2D(*_font, _cache, 0.035f, Text::Alignment::TopRight));
+    _text2.reset(new Text::Renderer3D(*_font, _cache, 0.035f, Text::Alignment::TopRight));
     _text2->reserve(40, GL::BufferUsage::DynamicDraw, GL::BufferUsage::StaticDraw);
 
     GL::Renderer::enable(GL::Renderer::Feature::Blending);
     GL::Renderer::setBlendFunction(GL::Renderer::BlendFunction::SourceAlpha, GL::Renderer::BlendFunction::OneMinusSourceAlpha);
     GL::Renderer::setBlendEquation(GL::Renderer::BlendEquation::Add, GL::Renderer::BlendEquation::Add);
 
-    _transformation = Matrix3::Matrix();
-    _projection = Matrix3::scaling(Vector2::yScale(Vector2(GL::defaultFramebuffer.viewport().size()).aspectRatio()));
+    _transformation = Matrix4::Matrix();
+    _projection = Matrix4::perspectiveProjection(
+        35.0_degf, Vector2{windowSize()}.aspectRatio(), 0.01f, 100.0f)*
+        Matrix4::translation(Vector3::zAxis(-5.0f));
 
-    cob = new Object3D{&_scene};
-    Matrix4 scaling = Matrix4::scaling(Vector3{2.0});
-    cob->transform(scaling);
-    cob->translate(Vector3{5.0f, 0.0f, -5.0f});
+    obj = new Object3D{&_scene};
+    //Matrix4 scaling = Matrix4::scaling(Vector3{2.0});
+    //obj->transform(scaling);
+    obj->translate(Vector3{0.0f, 0.0f, -10.0f});
 
     struct TriangleVertex {
         Vector3 position;
@@ -158,44 +174,49 @@ TextExample::TextExample(const Arguments& arguments): Platform::Application{argu
     Shaders::VertexColor3D::Position{},
     Shaders::VertexColor3D::Color3{});
 
+    new ThingAble(_triang_shader, _mesh, *obj, _drawables);
 
+    GL::Renderer::setClearColor(0x002b36_rgbf);
     updateText();
 }
 
 void TextExample::viewportEvent(ViewportEvent& event) {
     GL::defaultFramebuffer.setViewport({{}, event.framebufferSize()});
 
-    _projection = Matrix3::scaling(Vector2::yScale(Vector2(event.windowSize()).aspectRatio()));
+    //_projection = Matrix3::scaling(Vector2::yScale(Vector2(event.windowSize()).aspectRatio()));
 }
 
 void TextExample::drawEvent() {
+
     GL::defaultFramebuffer.clear(GL::FramebufferClear::Color);
+    GL::Renderer::setClearColor(0x002b36_rgbf);
 
     _shader.bindVectorTexture(_cache.texture());
-    _shader.setTransformationProjectionMatrix(_projection * _transformation)
+
+    auto tp = _projection * _transformation;
+    auto cam_tp = _camera->projectionMatrix() * _camera->cameraMatrix() * obj->transformationMatrix();
+
+    _shader.setTransformationProjectionMatrix(tp)
         .setColor(Color3::fromHsv({216.0_degf, 0.85f, 1.0f}))
         .setOutlineColor(Color3{0.95f})
         .setOutlineRange(0.45f, 0.35f)
         .setSmoothness(0.025f/ _transformation.uniformScaling());
     _text.draw(_shader);
 
-
-    /*
-    _shader.setTransformationProjectionMatrix(_camera->projectionMatrix() * cob->transformationMatrix())
+    _shader.setTransformationProjectionMatrix(tp)
         .setColor(Color3{1.0f})
         .setOutlineRange(0.5f, 1.0f)
         .setSmoothness(0.075f);
     _text2->mesh().draw(_shader);
-    */
 
-    Utility::Debug{} << "tp" << _projection * _transformation << "\n";
+    Utility::Debug{} << "tp\n" << tp << "\n";
 
-    auto cam_tp = _camera->projectionMatrix() * cob->transformationMatrix();
 
-    Utility::Debug{} << "cam_tp" << cam_tp << "\n";
+    Utility::Debug{} << "cam_tp\n" << cam_tp << "\n";
 
-    _triag_shader.setTransformationProjectionMatrix(cam_tp);
-    _mesh.draw(_triag_shader);
+    //_triang_shader.setTransformationProjectionMatrix(tp);
+    //_mesh.draw(_triang_shader);
+    _camera->draw(_drawables);
 
     swapBuffers();
 }
@@ -228,11 +249,18 @@ void TextExample::mouseMoveEvent(MouseMoveEvent& event) {
         Vector2{event.position() - _previousMousePosition}/
         Vector2{GL::defaultFramebuffer.viewport().size()};
 
+    _transformation =
+        Matrix4::rotationX(Rad{delta.y()})*
+        _transformation*
+        Matrix4::rotationY(Rad{delta.x()});
+
     (*_cameraObject)
         .rotate(Rad{-delta.y()}, _cameraObject->transformation().right().normalized())
         .rotateY(Rad{-delta.x()});
 
     _previousMousePosition = event.position();
+    event.setAccepted();
+
 
     updateText();
     event.setAccepted();
